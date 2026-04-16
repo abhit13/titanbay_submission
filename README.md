@@ -160,9 +160,8 @@ Claude was used throughout as a force multiplier:
 
 - **Data profiling.** Wrote and iterated Python scripts to profile all six tables — null counts, cardinality, email normalisation impact, entity resolution match rates, `partner_label` variant clustering, and referential integrity across the FK chain. Every numerical finding in this README is grounded in one of those scripts, not inferred.
 - **Architecture sanity-check.** Pressure-tested the three-layer staging/intermediate/marts split, the grain direction of the investor → entity → partner join, and the partner-grain fallback for the fund-close linkage problem. Useful for catching fan-out risks before they reached SQL.
-- **SQLX scaffolding.** Generated initial boilerplate for config blocks, assertion syntax, and BigQuery-specific patterns (`APPROX_TOP_COUNT`, `DATE_TRUNC(... WEEK(MONDAY))`), which I then edited rather than writing from scratch.
 - **README structuring.** Drafted section headings and the data-quality finding template (Finding → Decision), which I then filled in from the profiling output. The structure came from the model; the content came from the data.
-- **Edge-case challenge.** Asked Claude to find holes in the entity resolution logic — this is where the `unresolved_other` bucket came from (corporate emails that still don't match) and where the decision to retain personal-email tickets in volume counts but exclude them from investor-level metrics was stress-tested.
+
 
 I did not use AI to generate final SQL unreviewed, and every assertion, grain decision, and data-quality call-out in this submission was verified against the actual data before shipping.
 
