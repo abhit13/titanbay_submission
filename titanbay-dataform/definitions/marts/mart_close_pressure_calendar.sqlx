@@ -1,0 +1,34 @@
+config {
+  type: "table",
+  schema: "marts",
+  bigquery: {
+    partitionBy: "close_week"
+  },
+  description: "Fund close schedule aggregated by week and partner. Use this to anticipate high-pressure periods and plan IS team resourcing in advance.",
+
+  assertions: {
+    nonNull: ["close_week", "partner_id"],
+    rowConditions: [
+      "scheduled_closes > 0"
+    ]
+  }
+}
+
+SELECT
+  close_week,
+  close_month,
+  partner_id,
+  partner_name,
+  partner_type,
+  COUNT(DISTINCT close_id)                      AS scheduled_closes,
+  COUNT(DISTINCT fund_id)                       AS distinct_funds,
+  SUM(total_committed_aum_gbp)                  AS total_committed_aum_gbp,
+  MAX(investors_at_partner)                     AS investors_at_partner,
+  COUNTIF(closes_within_30_days)                AS closes_within_30_days,
+  COUNTIF(closes_within_60_days)                AS closes_within_60_days,
+  MIN(days_until_close)                         AS nearest_close_days_away,
+  COUNTIF(close_status = 'completed')           AS completed_closes,
+  COUNTIF(close_status = 'upcoming')            AS upcoming_closes
+
+FROM ${ref("int_fund_close_calendar")}
+GROUP BY 1, 2, 3, 4, 5

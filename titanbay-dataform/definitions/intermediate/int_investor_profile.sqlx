@@ -1,0 +1,56 @@
+config {
+  type: "view",
+  schema: "intermediate",
+  -- Grain: one row per investor.
+  -- Joins investor → entity → partner and attaches RM name where assigned.
+  -- No fan-out risk: investors carry entity_id (many-to-one join direction).
+  assertions: {
+    uniqueKey: ["investor_id"],
+    nonNull: ["investor_id", "email", "entity_id", "partner_id"]
+  }
+}
+
+WITH
+
+investors AS (
+  SELECT * FROM ${ref("stg_investors")}
+),
+
+entities AS (
+  SELECT entity_id, entity_name, partner_id, entity_type, kyc_status, is_kyc_approved
+  FROM ${ref("stg_entities")}
+),
+
+partners AS (
+  SELECT partner_id, partner_name, partner_type
+  FROM ${ref("stg_partners")}
+),
+
+rms AS (
+  SELECT rm_id, rm_name
+  FROM ${ref("stg_relationship_managers")}
+)
+
+SELECT
+  i.investor_id,
+  i.user_id,
+  i.email,
+  i.full_name,
+  i.country,
+  i.registered_date,
+  i.has_rm,
+  i.entity_id,
+  e.entity_name,
+  e.entity_type,
+  e.kyc_status,
+  e.is_kyc_approved,
+  e.partner_id,
+  p.partner_name,
+  p.partner_type,
+  i.relationship_manager_id,
+  r.rm_name
+
+FROM investors i
+INNER JOIN entities e ON i.entity_id = e.entity_id
+INNER JOIN partners p ON e.partner_id = p.partner_id
+LEFT JOIN  rms r      ON i.relationship_manager_id = r.rm_id

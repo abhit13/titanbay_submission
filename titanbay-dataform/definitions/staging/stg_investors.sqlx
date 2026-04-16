@@ -1,0 +1,32 @@
+config {
+  type: "view",
+  schema: "staging",
+  description: "Cleaned investor records.",
+  assertions: {
+    uniqueKey: ["investor_id"],
+    nonNull: ["investor_id", "user_id", "email", "full_name", "entity_id"]
+  }
+}
+
+SELECT
+  CAST(investor_id AS STRING)                       AS investor_id,
+  CAST(user_id AS STRING)                           AS user_id,
+
+  -- Email normalised to match stg_freshdesk_tickets normalisation.
+  -- This is the primary join key for entity resolution.
+  LOWER(TRIM(email))                                AS email,
+
+  TRIM(full_name)                                   AS full_name,
+  CAST(entity_id AS STRING)                         AS entity_id,
+  TRIM(country)                                     AS country,
+  TIMESTAMP(created_at)                             AS registered_at,
+  DATE(created_at)                                  AS registered_date,
+
+  -- NULL = investor self-manages on platform (expected, ~41% of rows)
+  CAST(relationship_manager_id AS STRING)           AS relationship_manager_id,
+
+  -- Derived: whether this investor has an assigned RM
+  relationship_manager_id IS NOT NULL               AS has_rm
+
+FROM ${ref("raw_platform_investors")}
+WHERE investor_id IS NOT NULL

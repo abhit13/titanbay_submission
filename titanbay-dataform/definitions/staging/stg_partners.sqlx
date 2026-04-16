@@ -1,0 +1,21 @@
+config {
+  type: "view",
+  schema: "staging",
+  description: "Cleaned partner organisations.",
+
+  assertions: {
+    uniqueKey: ["partner_id"],
+    nonNull: ["partner_id", "partner_name", "partner_type"],
+    rowConditions: [
+      "partner_type IN ('wealth_manager', 'fund_manager', 'family_office')"
+    ]
+  }
+}
+
+SELECT
+  CAST(partner_id AS STRING)                        AS partner_id,
+  TRIM(partner_name)                                AS partner_name,
+  LOWER(partner_type)                               AS partner_type
+
+FROM ${ref("raw_platform_partners")}
+WHERE partner_id IS NOT NULL

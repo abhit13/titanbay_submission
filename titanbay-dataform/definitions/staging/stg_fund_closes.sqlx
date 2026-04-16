@@ -1,0 +1,36 @@
+config {
+  type: "view",
+  schema: "staging",
+  description: "Cleaned fund closes. One row per close. 153 closes across 14 of 15 partners."
+  assertions: {
+    uniqueKey: ["close_id"],
+    nonNull: ["close_id", "fund_id", "fund_name", "partner_id", "scheduled_close_date", "close_status"],
+    rowConditions: [
+      "close_status IN ('upcoming', 'completed', 'cancelled')",
+      "total_committed_aum > 0"
+    ]
+  }
+}
+
+SELECT
+  CAST(close_id AS STRING)                                          AS close_id,
+  CAST(fund_id AS STRING)                                           AS fund_id,
+  TRIM(fund_name)                                                   AS fund_name,
+  CAST(partner_id AS STRING)                                        AS partner_id,
+  CAST(close_number AS INT64)                                       AS close_number,
+  DATE(scheduled_close_date)                                        AS scheduled_close_date,
+  DATE_TRUNC(DATE(scheduled_close_date), WEEK(MONDAY))              AS close_week,
+  DATE_TRUNC(DATE(scheduled_close_date), MONTH)                     AS close_month,
+  LOWER(close_status)                                               AS close_status,
+  CAST(total_committed_aum AS NUMERIC)                              AS total_committed_aum_gbp,
+
+  -- Derived: forward-looking flags for resourcing use cases
+  DATE_DIFF(DATE(scheduled_close_date), CURRENT_DATE(), DAY)        AS days_until_close,
+  DATE_DIFF(DATE(scheduled_close_date), CURRENT_DATE(), DAY)
+    BETWEEN 0 AND 30                                                AS closes_within_30_days,
+  DATE_DIFF(DATE(scheduled_close_date), CURRENT_DATE(), DAY)
+    BETWEEN 0 AND 60                                                AS closes_within_60_days
+
+FROM ${ref("raw_platform_fund_closes")}
+WHERE close_id IS NOT NULL
+  AND close_status != 'cancelled'  -- Cancelled closes excluded: no investor activity expected

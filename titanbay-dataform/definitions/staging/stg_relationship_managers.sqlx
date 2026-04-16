@@ -1,0 +1,21 @@
+config {
+  type: "view",
+  schema: "staging",
+  description: "Cleaned relationship managers.",
+
+  assertions: {
+    uniqueKey: ["rm_id"],
+    nonNull: ["rm_id", "partner_id", "name", "email"]
+  }
+}
+
+SELECT
+  CAST(rm_id AS STRING)                             AS rm_id,
+  CAST(partner_id AS STRING)                        AS partner_id,
+  TRIM(name)                                        AS rm_name,
+
+  -- Email normalised — this is the join key for RM ticket resolution
+  LOWER(TRIM(email))                                AS email
+
+FROM ${ref("raw_platform_relationship_managers")}
+WHERE rm_id IS NOT NULL

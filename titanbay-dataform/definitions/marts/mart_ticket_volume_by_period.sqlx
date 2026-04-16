@@ -1,0 +1,36 @@
+config {
+  type: "table",
+  schema: "marts",
+  bigquery: {
+    partitionBy: "created_week"
+  },
+  description: "Weekly ticket counts broken down by requester type, subject, and priority. Use this for trend analysis and identifying historical spike weeks.",
+
+  assertions: {
+    nonNull: ["created_week", "requester_type"],
+    rowConditions: [
+      "ticket_count > 0"
+    ]
+  }
+}
+
+SELECT
+  created_week,
+  created_month,
+  created_year,
+  partner_id,
+  requester_type,
+  subject,
+  priority,
+  COUNT(*)                                      AS ticket_count,
+  COUNTIF(status IN ('open', 'pending'))        AS open_count,
+  COUNTIF(status = 'resolved')                  AS resolved_count,
+  COUNTIF(status = 'closed')                    AS closed_count,
+  COUNTIF(is_unresolved)                        AS unresolved_count,
+  COUNTIF(priority IN ('high', 'urgent'))       AS high_priority_count,
+  AVG(resolution_hours)                         AS avg_resolution_hours,
+  COUNT(DISTINCT investor_id)                   AS distinct_investors,
+  COUNT(DISTINCT rm_id)                         AS distinct_rms
+
+FROM ${ref("int_ticket_requester_resolved")}
+GROUP BY 1, 2, 3, 4, 5, 6, 7

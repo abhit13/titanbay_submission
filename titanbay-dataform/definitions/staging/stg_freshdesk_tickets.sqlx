@@ -1,0 +1,63 @@
+config {
+  type: "view",
+  schema: "staging",
+  description: "Cleaned Freshdesk tickets.",
+
+  assertions: {
+    uniqueKey: ["ticket_id"],
+    nonNull: ["ticket_id", "requester_email", "created_at", "status", "priority"],
+    rowConditions: [
+      "status IN ('open', 'pending', 'resolved', 'closed')",
+      "priority IN ('low', 'medium', 'high', 'urgent')",
+      "is_internal_ticket IN (TRUE, FALSE)"
+    ]
+  }
+}
+
+SELECT
+  CAST(ticket_id AS STRING)                                   AS ticket_id,
+
+  -- Email normalisation: source contains ALL CAPS emails (34 rows observed).
+  -- Without LOWER + TRIM these will not join to any platform table.
+  LOWER(TRIM(requester_email))                                AS requester_email,
+  LOWER(TRIM(requester_name))                                 AS requester_name,
+
+  subject,
+  LOWER(status)                                               AS status,
+  LOWER(priority)                                             AS priority,
+  tags,
+
+  -- partner_label is manually typed by IS agents — 80 free-text variants
+  -- for 15 partners, 44% null. Kept for reference but not used as a join key.
+  partner_label,
+
+  TIMESTAMP(created_at)                                       AS created_at,
+  TIMESTAMP(resolved_at)                                      AS resolved_at,
+
+  DATE(created_at)                                            AS created_date,
+  DATE_TRUNC(DATE(created_at), WEEK(MONDAY))                  AS created_week,
+  DATE_TRUNC(DATE(created_at), MONTH)                         AS created_month,
+  EXTRACT(YEAR FROM created_at)                               AS created_year,
+
+  -- Resolution hours: null for unresolved tickets (expected — ~42% of tickets)
+  TIMESTAMP_DIFF(
+    TIMESTAMP(resolved_at),
+    TIMESTAMP(created_at),
+    HOUR
+  )                                                           AS resolution_hours,
+
+  -- Internal flag: tickets from Titanbay staff email domains.
+  -- 100 tickets identified: mix of QA tests and IS team tickets.
+  -- These are excluded from all mart models.
+  LOWER(TRIM(requester_email)) LIKE '%@titanbay.com'
+  OR LOWER(TRIM(requester_email)) LIKE '%@titanbay.co.uk'    AS is_internal_ticket
+
+FROM ${ref("raw_freshdesk_tickets")}
+WHERE ticket_id IS NOT NULL
+
+-- Exclude internal Titanbay staff tickets from all downstream processing.
+-- 100 rows removed. Documented in data quality notes.
+AND NOT (
+  LOWER(TRIM(requester_email)) LIKE '%@titanbay.com'
+  OR LOWER(TRIM(requester_email)) LIKE '%@titanbay.co.uk'
+)

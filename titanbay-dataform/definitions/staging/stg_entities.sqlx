@@ -1,0 +1,26 @@
+config {
+  type: "view",
+  schema: "staging",
+  description: "Cleaned investing entities.",
+
+  assertions: {
+    uniqueKey: ["entity_id"],
+    nonNull: ["entity_id", "entity_name", "partner_id", "entity_type", "kyc_status"],
+    rowConditions: [
+      "entity_type IN ('individual', 'corporate', 'trust', 'pension_fund')",
+      "kyc_status IN ('approved', 'pending', 'rejected', 'expired')"
+    ]
+  }
+}
+
+SELECT
+  CAST(entity_id AS STRING)                         AS entity_id,
+  TRIM(entity_name)                                 AS entity_name,
+  CAST(partner_id AS STRING)                        AS partner_id,
+  LOWER(entity_type)                                AS entity_type,
+  LOWER(kyc_status)                                 AS kyc_status,
+  -- Derived: whether this entity is currently KYC-clear for investing
+  kyc_status = 'approved'                           AS is_kyc_approved
+
+FROM ${ref("raw_platform_entities")}
+WHERE entity_id IS NOT NULL

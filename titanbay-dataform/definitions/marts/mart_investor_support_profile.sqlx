@@ -1,0 +1,88 @@
+config {
+  type: "table",
+  schema: "marts",
+  bigquery: {
+    partitionBy: "DATE(last_ticket_date)",
+    clusterBy: ["partner_id", "kyc_status"]
+  },
+  description: "One row per investor with their full ticket history. Starting point for understanding which investors raise the most tickets and why.",
+
+  assertions: {
+    uniqueKey: ["investor_id"],
+    nonNull: ["investor_id"],
+    rowConditions: [
+      "total_tickets >= 0",
+      "open_tickets >= 0",
+      "ticket_volume_segment IN ('none', 'low', 'medium', 'high')"
+    ]
+  }
+}
+
+WITH
+
+investors AS (
+  SELECT * FROM ${ref("int_investor_profile")}
+),
+
+-- Aggregate ticket history to investor grain
+ticket_summary AS (
+  SELECT
+    investor_id,
+    COUNT(*)                                          AS total_tickets,
+    COUNTIF(status IN ('open', 'pending'))            AS open_tickets,
+    COUNTIF(status = 'resolved')                      AS resolved_tickets,
+    COUNTIF(status = 'closed')                        AS closed_tickets,
+    COUNTIF(priority IN ('high', 'urgent'))           AS high_priority_tickets,
+    AVG(resolution_hours)                             AS avg_resolution_hours,
+    MAX(created_date)                                 AS last_ticket_date,
+    MIN(created_date)                                 AS first_ticket_date,
+    DATE_DIFF(MAX(created_date), MIN(created_date), DAY)  AS ticket_span_days,
+    APPROX_TOP_COUNT(subject, 1)[OFFSET(0)].value    AS most_common_subject,
+    APPROX_TOP_COUNT(tags, 1)[OFFSET(0)].value       AS most_common_tags
+
+  FROM ${ref("int_ticket_requester_resolved")}
+  WHERE requester_type = 'investor'
+    AND investor_id IS NOT NULL
+  GROUP BY investor_id
+)
+
+SELECT
+  i.investor_id,
+  i.email,
+  i.full_name,
+  i.country,
+  i.registered_date,
+  i.has_rm,
+  i.relationship_manager_id,
+  i.rm_name,
+  i.entity_id,
+  i.entity_name,
+  i.entity_type,
+  i.kyc_status,
+  i.is_kyc_approved,
+  i.partner_id,
+  i.partner_name,
+  i.partner_type,
+  COALESCE(ts.total_tickets, 0)           AS total_tickets,
+  COALESCE(ts.open_tickets, 0)            AS open_tickets,
+  COALESCE(ts.resolved_tickets, 0)        AS resolved_tickets,
+  COALESCE(ts.closed_tickets, 0)          AS closed_tickets,
+  COALESCE(ts.high_priority_tickets, 0)   AS high_priority_tickets,
+  ts.avg_resolution_hours,
+  ts.last_ticket_date,
+  ts.first_ticket_date,
+  ts.ticket_span_days,
+  ts.most_common_subject,
+  ts.most_common_tags,
+
+  CASE
+    WHEN COALESCE(ts.total_tickets, 0) = 0  THEN 'none'
+    WHEN ts.total_tickets <= 5              THEN 'low'
+    WHEN ts.total_tickets <= 12             THEN 'medium'
+    ELSE 'high'
+  END                                     AS ticket_volume_segment,
+
+  DATE_DIFF(CURRENT_DATE(), ts.last_ticket_date, DAY)  AS days_since_last_ticket
+
+FROM investors i
+LEFT JOIN ticket_summary ts ON i.investor_id = ts.investor_id

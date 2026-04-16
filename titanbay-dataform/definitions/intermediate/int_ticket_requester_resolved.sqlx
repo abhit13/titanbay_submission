@@ -1,0 +1,125 @@
+config {
+  type: "view",
+  schema: "intermediate",
+  Description: "Each investor enriched with their entity, KYC status, partner, and assigned RM."
+  assertions: {
+    uniqueKey: ["ticket_id"],
+    nonNull: ["ticket_id", "requester_type"],
+    rowConditions: [
+      "requester_type IN ('investor', 'rm', 'unresolved_personal', 'unresolved_other')",
+      "requester_type IN ('investor', 'rm') OR partner_id IS NULL"
+    ]
+  }
+}
+
+WITH
+
+tickets AS (
+  SELECT * FROM ${ref("stg_freshdesk_tickets")}
+),
+
+investors AS (
+  SELECT
+    investor_id,
+    email,
+    full_name,
+    entity_id,
+    has_rm,
+    relationship_manager_id
+  FROM ${ref("stg_investors")}
+),
+
+rms AS (
+  SELECT
+    rm_id,
+    partner_id,
+    rm_name,
+    email
+  FROM ${ref("stg_relationship_managers")}
+),
+
+entities AS (
+  SELECT
+    entity_id,
+    partner_id
+  FROM ${ref("stg_entities")}
+),
+
+investor_match AS (
+  SELECT
+    t.ticket_id,
+    i.investor_id,
+    i.full_name           AS investor_name,
+    i.entity_id,
+    i.has_rm,
+    i.relationship_manager_id,
+    'investor'            AS requester_type
+  FROM tickets t
+  INNER JOIN investors i ON t.requester_email = i.email
+),
+
+rm_match AS (
+  SELECT
+    t.ticket_id,
+    r.rm_id,
+    r.rm_name,
+    r.partner_id          AS rm_partner_id,
+    'rm'                  AS requester_type
+  FROM tickets t
+  LEFT JOIN investor_match im ON t.ticket_id = im.ticket_id
+  INNER JOIN rms r ON t.requester_email = r.email
+  WHERE im.ticket_id IS NULL
+),
+unresolved_classified AS (
+  SELECT
+    t.ticket_id,
+    CASE
+      WHEN REGEXP_CONTAINS(t.requester_email, r'@(gmail|outlook|yahoo|icloud|hotmail)\.')
+        THEN 'unresolved_personal'
+      ELSE 'unresolved_other'
+    END AS requester_type
+  FROM tickets t
+  LEFT JOIN investor_match im ON t.ticket_id = im.ticket_id
+  LEFT JOIN rm_match rm       ON t.ticket_id = rm.ticket_id
+  WHERE im.ticket_id IS NULL
+    AND rm.ticket_id IS NULL
+)
+
+SELECT
+  t.ticket_id,
+  t.requester_email,
+  t.requester_name,
+  t.subject,
+  t.status,
+  t.priority,
+  t.tags,
+  t.partner_label,
+  t.created_at,
+  t.created_date,
+  t.created_week,
+  t.created_month,
+  t.created_year,
+  t.resolved_at,
+  t.resolution_hours,
+  COALESCE(
+    im.requester_type,
+    rm.requester_type,
+    uc.requester_type,
+    'unresolved_other'
+  )                                     AS requester_type,
+  im.investor_id,
+  im.investor_name,
+  im.entity_id,
+  im.has_rm                             AS investor_has_rm,
+  im.relationship_manager_id            AS investor_rm_id,
+  rm.rm_id,
+  rm.rm_name,
+  COALESCE(e.partner_id, rm.rm_partner_id) AS partner_id,
+  im.investor_id IS NULL
+    AND rm.rm_id IS NULL                AS is_unresolved
+
+FROM tickets t
+LEFT JOIN investor_match im ON t.ticket_id = im.ticket_id
+LEFT JOIN rm_match rm       ON t.ticket_id = rm.ticket_id
+LEFT JOIN unresolved_classified uc ON t.ticket_id = uc.ticket_id
+LEFT JOIN entities e        ON im.entity_id = e.entity_id

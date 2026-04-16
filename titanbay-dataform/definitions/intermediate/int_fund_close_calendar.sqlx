@@ -1,0 +1,51 @@
+config {
+  type: "view",
+  schema: "intermediate",
+  Description: "Fund closes with partner context and a proxy count of investors exposed at that partner."
+  assertions: {
+    uniqueKey: ["close_id"],
+    nonNull: ["close_id", "partner_id", "scheduled_close_date"]
+  }
+}
+
+WITH
+
+closes AS (
+  SELECT * FROM ${ref("stg_fund_closes")}
+),
+
+partners AS (
+  SELECT partner_id, partner_name, partner_type
+  FROM ${ref("stg_partners")}
+),
+
+investor_counts AS (
+  SELECT
+    e.partner_id,
+    COUNT(DISTINCT i.investor_id) AS total_investors_at_partner
+  FROM ${ref("stg_entities")} e
+  INNER JOIN ${ref("stg_investors")} i ON i.entity_id = e.entity_id
+  GROUP BY e.partner_id
+)
+
+SELECT
+  c.close_id,
+  c.fund_id,
+  c.fund_name,
+  c.close_number,
+  c.partner_id,
+  p.partner_name,
+  p.partner_type,
+  c.scheduled_close_date,
+  c.close_week,
+  c.close_month,
+  c.close_status,
+  c.total_committed_aum_gbp,
+  c.days_until_close,
+  c.closes_within_30_days,
+  c.closes_within_60_days,
+  COALESCE(ic.total_investors_at_partner, 0) AS investors_at_partner
+
+FROM closes c
+INNER JOIN partners p        ON c.partner_id = p.partner_id
+LEFT JOIN  investor_counts ic ON c.partner_id = ic.partner_id
