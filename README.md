@@ -1,14 +1,18 @@
 # Titanbay IS Support — Dataform Data Model
 
-**Stack:** Dataform + BigQuery (GCP)  
-**Author:** Abhit Ghelani  
+**Stack:** Dataform + BigQuery (GCP)
+**Author:** Abhit Ghelani
 **Date:** April 2026
 
 ---
 
 ## Business Problem
 
-The Investor Services team resolves support tickets reactively with no structured view of which investors generate the most load, what they struggle with, or when pressure will peak. The Head of IS asked two questions:
+The IS team currently resolves tickets reactively with no structured view of which investors raise the most, what they struggle with, or when pressure will peak. The Head of Investor Services asked:
+
+> *"I want to understand which investors are raising the most support tickets and what patterns exist in that behaviour. I also want to be able to anticipate when our team is likely to be under more pressure than usual, so we can plan resourcing in advance rather than firefighting."*
+
+This breaks down into two analytical questions, which the model is designed to answer:
 
 1. Which investors raise the most tickets, and what patterns exist in that behaviour?
 2. When will the team be under more pressure than usual, so resourcing can be planned in advance?
@@ -49,8 +53,8 @@ marts/            ← wide, documented, analyst-facing tables. Explicit grain on
 | `int_ticket_requester_resolved` | Intermediate | ticket_id | Core entity resolution model |
 | `int_investor_profile` | Intermediate | investor_id | Investor enriched with entity + partner context |
 | `int_fund_close_calendar` | Intermediate | close_id | Closes with partner and investor count context |
-| `mart_investor_support_profile` | Mart | investor_id | Every investor with full ticket history |
-| `mart_ticket_volume_by_period` | Mart | week × type × subject × priority | Weekly trend analysis |
+| `mart_investor_support_profile` | Mart | investor_id | Every investor with their **self-raised** ticket history (RM-raised tickets attributed at partner level only) |
+| `mart_ticket_volume_by_period` | Mart | week × partner × type × subject × priority | Weekly trend analysis |
 | `mart_close_pressure_calendar` | Mart | week × partner | Forward-looking resourcing calendar |
 
 ---
@@ -68,13 +72,14 @@ Resolution is a two-pass email join. Investor match is attempted first; RM match
 
 **Results from profiling the actual data (1,900 tickets after excluding 100 internal):**
 
-| Requester type | Tickets | % |
-|---|---|---|
-| investor | 1,060 | 55.8% |
-| rm | 760 | 40.0% |
-| unresolved_personal | 80 | 4.2% |
+| Requester type | Tickets | % | Attribution possible |
+|---|---|---|---|
+| `investor` | 1,060 | 55.8% | Investor + entity + partner |
+| `rm` | 760 | 40.0% | Partner only (no investor ID on RM or ticket) |
+| `unresolved_personal` | 80 | 4.2% | None — personal email domain (Gmail, Outlook, Yahoo, iCloud, Hotmail) |
+| `unresolved_other` | 0 | 0.0% | None — corporate email, no platform match (defensive catch-all, empty in current data) |
 
-The 80 unresolved personal-email tickets (Gmail, Outlook, Yahoo, iCloud) represent investors who registered on the platform with a corporate email but raised their Freshdesk ticket using a personal one. No further resolution is possible without data changes at source.
+Unresolved tickets represent investors whose Freshdesk email does not match their platform record. In this dataset all of them resolve to personal email domains — investors registered with a corporate email but raise tickets from a personal address. `unresolved_other` is retained in the model as a defensive fourth category to catch anything that falls through the other three buckets (typos, former employees, delegated assistants using unexpected addresses). It is currently empty but is in place so that a future data-quality drift into a new bucket surfaces immediately rather than silently misclassifying as `unresolved_personal`. Unresolved tickets are retained in volume counts but dropped from investor-level metrics.
 
 **RM ticket attribution:** RM tickets can be linked to the RM's partner organisation, but not to a specific investor — there is no investor identifier on either the ticket or the RM record. These are counted at partner level in the mart, not investor level. This is a documented limitation.
 
@@ -98,7 +103,7 @@ All findings are based on profiling the actual source data.
 
 ### 3. `partner_label` is unusable as a join key - Critical
 
-**Finding:** The `partner_label` field in tickets is manually typed by IS agents. Profiling found 80 distinct values mapping to just 15 partners. Examples for a single partner: `Ashford`, `Ashford WM`, `Ashford Wealth`, `ASHFORD WEALTH MANAGEMENT`, `ashford wealth management`. Additionally, 878 of 2,000 tickets (44%) have no `partner_label` at all.
+**Finding:** The `partner_label` field in tickets is manually typed by IS agents. Profiling found 80 distinct values mapping to just 15 partners. Examples for a single partner: `Ashford`, `Ashford WM`, `Ashford Wealth`, `ASHFORD WEALTH MANAGEMENT`, `ashford wealth management`. Additionally, 878 of the 2,000 raw tickets (44%) have no `partner_label` at all — this figure is computed pre-exclusion, on the raw source, because `partner_label` quality is a property of the source system regardless of which tickets flow downstream.
 
 **Decision:** `partner_label` is retained as a display/reference field only. It is never used as a join key. The authoritative partner join path is: `ticket email → investor/RM → entity → partner_id`. All 1,122 non-null labels are recoverable to a canonical partner name via fuzzy matching, but this is fragile and not relied upon for any metric.
 
@@ -110,7 +115,7 @@ All findings are based on profiling the actual source data.
 
 ### 5. Personal email addresses — 80 unresolved tickets
 
-**Finding:** 80 tickets come from personal email domains (Gmail, Outlook, Yahoo, iCloud, Hotmail) that don't match any platform record. These are investors who raised a ticket using a personal email rather than their registered platform email.
+**Finding:** 80 tickets come from personal email domains (Gmail, Outlook, Yahoo, iCloud, Hotmail) that don't match any platform record. These are investors who raised a ticket using a personal email rather than their registered platform email. A fourth `unresolved_other` category exists in the model for corporate emails that still don't match (typos, former employees, delegated assistants), but is empty in the current data.
 
 **Decision:** Classified as `requester_type = 'unresolved_personal'` and retained in all volume counts. Dropped from investor-level metrics (can't be attributed) but visible in `mart_ticket_volume_by_period`. Treated as a data quality signal — their share should be monitored over time.
 
@@ -151,10 +156,29 @@ All `partner_id` references in entities and closes are valid. All `relationship_
 
 ## How I Used AI Tools
 
-Claude was used throughout this task as a force multiplier for the following:
+Claude was used throughout as a force multiplier:
 
-- **Data profiling:** Python scripts to profile all six tables — null counts, cardinality checks, email normalisation analysis, entity resolution matching, partner_label variant analysis, and referential integrity checks. All numerical findings in this README come from running code against the actual data.
-- **Architecture review:** Sanity-checking the grain management approach for the investor→entity→partner join chain and the fund close linkage problem.
+- **Data profiling.** Wrote and iterated Python scripts to profile all six tables — null counts, cardinality, email normalisation impact, entity resolution match rates, `partner_label` variant clustering, and referential integrity across the FK chain. Every numerical finding in this README is grounded in one of those scripts, not inferred.
+- **Architecture sanity-check.** Pressure-tested the three-layer staging/intermediate/marts split, the grain direction of the investor → entity → partner join, and the partner-grain fallback for the fund-close linkage problem. Useful for catching fan-out risks before they reached SQL.
+- **SQLX scaffolding.** Generated initial boilerplate for config blocks, assertion syntax, and BigQuery-specific patterns (`APPROX_TOP_COUNT`, `DATE_TRUNC(... WEEK(MONDAY))`), which I then edited rather than writing from scratch.
+- **README structuring.** Drafted section headings and the data-quality finding template (Finding → Decision), which I then filled in from the profiling output. The structure came from the model; the content came from the data.
+- **Edge-case challenge.** Asked Claude to find holes in the entity resolution logic — this is where the `unresolved_other` bucket came from (corporate emails that still don't match) and where the decision to retain personal-email tickets in volume counts but exclude them from investor-level metrics was stress-tested.
+
+I did not use AI to generate final SQL unreviewed, and every assertion, grain decision, and data-quality call-out in this submission was verified against the actual data before shipping.
+
+---
+
+## How to Run
+
+```bash
+npm install -g @dataform/cli
+dataform install
+dataform compile
+dataform run          # builds staging → intermediate → marts
+dataform test         # runs assertions
+```
+
+Raw tables are declared in `sources.js` and expected to exist in the `raw` dataset of the `titanbay-prod` project. Adjust `dataform.json` (`defaultDatabase`, `defaultLocation`) for other environments.
 
 ---
 
